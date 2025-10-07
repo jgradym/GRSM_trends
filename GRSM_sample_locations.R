@@ -159,24 +159,18 @@ sites_all %>% count(dataset)
 
 #-----------------------#
 
-watershed = st_read("/Users/jgradym/Downloads/GRSM_WATERSHEDS/GRSM_WATERSHEDS.shp")[2]
-str(watershed)
+watershed = st_read('/Users/jgradym/Library/CloudStorage/GoogleDrive-jgradym@gmail.com/Shared drives/GRSM_CESU/Maine/Locations/GRSM_WATERSHEDS/GRSM_WATERSHEDS.shp')[2]
 plot(watershed)
 
 
-# start from your 'watershed' object
-ws <- watershed
-
 # dissolve all polygons into one (kills inner boundaries)
-watershed2 <- ws |>
+watershed_outline <-watershed |>
   st_make_valid() |>
   st_union() |>
   st_cast("MULTIPOLYGON")
 
 # plot: outline only
-plot(st_geometry(watershed2), col = NA, border = "black", lwd = 2, axes = TRUE)
-
-
+plot(st_geometry(watershed_outline), col = NA, border = "black", lwd = 2, axes = TRUE)
 
 # convert sites to sf if not already
 sites_sf <- st_as_sf(sites_all, coords = c("lon", "lat"), crs = 4326)
@@ -198,10 +192,11 @@ p = ggplot() +
     "fish_threepass" = "#377eb8",
     "inverts"        = "#4daf4a",
     "forests"        = "#984ea3",
-    "soils_parkwide" = "#ff7f00",
-    "soils_noland"   = "#e41a1c"
+    "soils_parkwide" = "orange2",
+    "soils_noland"   = "firebrick"
   )) +
-  
+
+
   # hollow point shapes (no fill used)
   # 1 = hollow circle, 0 = hollow square, 2 = hollow triangle, 5 = hollow diamond, 6 = hollow triangle-down
   scale_shape_manual(values = c(
@@ -221,7 +216,7 @@ p = ggplot() +
     color = "Dataset", shape = "Dataset"
   ) +
   theme(
-    legend.position = c(0.02, 0.98),              # inset: (x, y) in NPC coords
+    legend.position.inside = c(0.02, 0.98),              # inset: (x, y) in NPC coords
     legend.justification = c("left", "top"),
     legend.background = element_rect(fill = scales::alpha("white", 0.7), color = "grey40"),
     panel.grid.major = element_line(color = "grey85", linewidth = 0.2)
@@ -242,25 +237,150 @@ neon_sf <- st_as_sf(neon_map, coords = c("longitude","latitude"), crs = 4326)
 unique(neon_sf$site_code)
 
 neon_sf <- neon_sf %>%
-  mutate(type = ifelse(siteCode == "LECO", "aquatic", "terrestrial"))
+  mutate(feature_key = str_trim(feature_key),
+         type = case_when(
+           str_detect(feature_key, regex("Sediment|Fish|Riparian|Discharge|Gauge", ignore_case = TRUE)) ~ "neon_aquatic",
+           TRUE ~ "neon_terrestrial"
+         ))
 
-# plot: hollow symbols, inset legend
+# sanity checks
+neon_sf %>% count(type)
+neon_sf %>% count(type, feature_key) %>% arrange(type, desc(n))
 ggplot() +
-  geom_sf(data = neon_sf,
-          aes(shape = type),
-          color = "black", fill = NA, size = 3, stroke = 1) +
-  scale_shape_manual(values = c(terrestrial = 0, aquatic = 2)) +
+  # park border first
+  geom_sf(data = watershed_outline, fill = "grey95", color = "black", linewidth = 0.6) +
+  # watershed outlines
+  geom_sf(data = watershed, fill = NA, color = "grey60", linewidth = 0.3) +
+  # 1️⃣ terrestrial points first
+  geom_sf(
+    data = dplyr::filter(neon_sf, type == "neon_terrestrial"),
+    aes(shape = feature_key, color = type),
+    fill = NA, size = 2, stroke = .5
+  ) +
+  # 2️⃣ aquatic points second — these plot *on top*
+  geom_sf(
+    data = dplyr::filter(neon_sf, type == "neon_aquatic"),
+    aes(shape = feature_key, color = type),
+    fill = NA, size = 2, stroke = .5
+  ) +
+  scale_color_manual(
+    values = c(neon_aquatic = "#00BFFF", neon_terrestrial = "#FF8C00"),
+    name = "Environment"
+  ) +
+  scale_shape_manual(values = shape_map, name = "Feature type") +
   coord_sf() +
   theme_minimal() +
+  theme(
+    legend.position = c(0.02, 0.98),
+    legend.justification = c("left", "top"),
+    legend.background = element_rect(fill = scales::alpha("white", 0.8), color = "grey40"),
+    panel.grid.major = element_line(color = "grey90", linewidth = 0.2)
+  ) +
   labs(
-    title = "NEON Field Installations at GRSM",
-    subtitle = "Terrestrial (GRSM) and Aquatic (LECO) features",
-    x = "Longitude", y = "Latitude",
-    shape = "NEON Site Type"
+    title = "NEON Field Installations within Great Smoky Mountains NP",
+    subtitle = "Blue = aquatic (plotted on top), Brown = terrestrial; all symbols hollow and unique per feature type",
+    x = "Longitude", y = "Latitude"
   )
 
 
+# Combine maps
 
 
+# --- 1) Classify NEON features (robustly) ---
+neon_sf <- neon_sf %>%
+  mutate(
+    feature_key = str_squish(feature_key),
+    type = case_when(
+      feature_key %in% c("Sediment Point","Fish Point","Riparian Assessment",
+                         "Discharge Point","Staff Gauge") ~ "neon_aquatic",
+      TRUE ~ "neon_terrestrial"
+    )
+  )
+
+# --- 2) Shape maps (hollow symbols) ---
+grsm_shape_map <- c(
+  "fish_threepass" = 1,
+  "inverts"        = 0,
+  "forests"        = 2,
+  "soils_parkwide" = 5,
+  "soils_noland"   = 6
+)
+
+neon_shape_map <- c(
+  "Tower Location"             = 1,
+  "Staff Gauge"                = 0,
+  "Sensor Station"             = 2,
+  "Meteorological Station"     = 5,
+  "Megapit"                    = 6,
+  "Sediment Point"             = 3,
+  "Riparian Assessment"        = 4,
+  "Fish Point"                 = 7,
+  "Discharge Point"            = 8,
+  "Benchmark"                  = 9,
+  "Hut"                        = 10,
+  "Distributed Base Plot"      = 11,
+  "Distributed Mammal Grid"    = 12,
+  "Distributed Mosquito Point" = 13,
+  "Distributed Bird Grid"      = 14,
+  "Distributed Tick Plot"      = 1
+)
+
+shape_map <- c(grsm_shape_map, neon_shape_map)
+
+# --- 3) Unified color map: earthy GRSM + neon NEON ---
+col_map <- c(
+  "fish_threepass" = "#94644e",  # Smoky burnt sienna
+  "inverts"        = "#5a8f5a",  # muted forest green
+  "forests"        = "#7b659b",  # soft violet-gray
+  "soils_parkwide" = "#b66a27",  # dull burnt orange
+  "soils_noland"   = "#a43a32",  # clay red
+  "neon_aquatic"        = "#00BFFF",  # bright neon blue
+  "neon_terrestrial"    = "#FF8C00"   # bright neon orange
+)
+
+# --- 4) Plot ---
+p = ggplot() +
+  geom_sf(data = watershed_outline, fill = "grey95", color = "black", linewidth = 0.6) +
+  geom_sf(data = watershed, fill = NA, color = "grey60", linewidth = 0.3) +
+  
+  # GRSM datasets
+  geom_sf(
+    data = sites_sf,
+    aes(color = dataset, shape = dataset),
+    fill = NA, size = 2.5, stroke = .75, alpha = 0.95
+  ) +
+  
+  # NEON neon_terrestrial
+  geom_sf(
+    data = filter(neon_sf, type == "neon_terrestrial"),
+    aes(color = type, shape = feature_key),
+    fill = NA, size = 2.5, stroke = .75
+  ) +
+  
+  # NEON aquatic (on top)
+  geom_sf(
+    data = filter(neon_sf, type == "neon_aquatic"),
+    aes(color = type, shape = feature_key),
+    fill = NA, size = 2.5, stroke = .75
+  ) +
+  
+  scale_color_manual(values = col_map, name = "Group") +
+  scale_shape_manual(values = shape_map, name = "Type") +
+  coord_sf() +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.02, 0.98),
+    legend.justification = c("left","top"),
+    legend.background = element_rect(fill = scales::alpha("white", 0.8), color = "grey40"),
+    panel.grid.major = element_line(color = "grey90", linewidth = 0.2)
+  ) +
+  labs(
+    title = "GRSM Monitoring Sites and NEON Field Installations",
+    subtitle = "Smoky datasets (muted earthy colors) with NEON terrestrial (orange) and aquatic (blue) overlays — all hollow symbols",
+    x = "Longitude", y = "Latitude"
+  )
 
 
+pdf("~/Downloads/neon_and_grsm_sites.pdf")
+p
+dev.off()
