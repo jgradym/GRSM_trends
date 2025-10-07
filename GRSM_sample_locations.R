@@ -237,8 +237,9 @@ p
 
 neon_map = read_csv('/Users/jgradym/Library/CloudStorage/GoogleDrive-jgradym@gmail.com/Shared drives/GRSM_CESU/Maine/Locations/NEON-SiteMap-Table.csv') %>%
   clean_names()
-
-
+str(neon_map)
+neon_sf <- st_as_sf(neon_map, coords = c("longitude","latitude"), crs = 4326)
+unique(neon_sf$site_code)
 
 neon_sf <- neon_sf %>%
   mutate(type = ifelse(siteCode == "LECO", "aquatic", "terrestrial"))
